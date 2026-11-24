@@ -150,10 +150,47 @@ Interpretation:
   - a different definition of "1σ" (how many kA?) than the tables;
   - a different beam configuration from the "PRISM 2023" tables.
 
+### Full statistics, reco level (2026-11-24)
+
+Plot: `workspace/energy_reco_systs_weights_varied.png`, made by `my_analysis_syst.C`. Reco `Enu.calo`, no cuts applied. Inputs: nominal `CAF_fluxsyst.flat/0000000/*.root` (24 files) and varied `horn_current_neg/CAF.flat/*.root` (25 files), with the varied sample scaled to the nominal POT.
+
+| Reco E [GeV] | varied / nom (red) | universe 1 (−1σ) / nom (blue) |
+|---|---|---|
+| 0.5–3 | ≈ 1.03–1.05 | ≈ 1.00 |
+| 3.5–5 | ≈ 0.99–1.00 | ≈ 0.97–0.98 (dip) |
+| > 6 | ≈ 1, scattered | ≈ 1 |
+
+Conclusion: the two **are different**, and more statistics won't fix it.
+- The stat error on red is ~0.5% near the peak, so a 3–4% gap over 5–6 bins below 3 GeV is many σ.
+- The red error bar is also the right error for (red − blue): the universe is built from the same events as the nominal.
+- The shapes differ too: red is an **excess at low E**, blue is a **deficit just above the peak**.
+- Red/blue is roughly a flat +3–4% from 0 to 5 GeV, which looks more like a normalisation offset than a shape effect.
+
+Likely causes, most suspicious first:
+1. **The −1σ weight is a mirrored straight line.** With `vals = {0, 1}`, universe 1 gets `2·w[0] − w[1]`, i.e. the +1σ table extended out to −1σ. Nothing in the file gives the real −1σ response, and horn-current effects are often asymmetric. Checks: also plot universe 2 (+1σ), since the macro only draws universe 1, and fix the legend so it shows the sigma.
+2. **Normalisation.** Print `sMuonRecoNuEnergyVaried.POT()` and `pot_n` next to the selected event counts. Check that the varied flux files count POT the same way as the nominal ones, and that "neg" really means −1σ in the units of the dial.
+3. **A different physical change.** The varied flux might use a different horn current, or have other settings changed as well.
+
+Quantitative check to add to the macro, after `r_us` is filled:
+```cpp
+double chi2 = 0; int ndf = 0;
+for (int b = 1; b <= r_v->GetNbinsX(); ++b) {
+  const double e = r_v->GetBinError(b);
+  if (e <= 0 || h_n->GetBinContent(b) <= 0) continue;
+  const double d = r_v->GetBinContent(b) - r_us[0]->GetBinContent(b);
+  chi2 += d*d/(e*e); ++ndf;
+}
+std::cout << "chi2/ndf (varied vs universe 1) = " << chi2 << "/" << ndf << std::endl;
+```
+- Expect χ²/ndf ≫ 1, driven by the bins below 5 GeV.
+- Then repeat with `h_v` scaled to the same integral as `h_n`. If χ² drops a lot, the problem is mostly normalisation (cause 2). If not, it is shape (cause 1 or 3).
+
 ## Next steps
 
 - [ ] Rerun `caffluxweighter --nd --fhc` on all nominal CAFs (24 files) and the varied ones.
-- [ ] Redo the reweight vs varied comparison on all files (errors ~5× smaller, 0.4–0.9% per bin).
+- [x] Redo the reweight vs varied comparison on all files (done at reco level, 2026-11-24: still incompatible, see [[#Full statistics, reco level (2026-11-24)]]).
+- [ ] Compute χ² varied vs −1σ, with and without normalising to the same integral.
+- [ ] Plot universe 2 (+1σ) too; print the POT of both samples.
 - [ ] Compare nominal and varied **flux histograms** directly at the SAND position, before GENIE and reco.
 - [ ] Check the horn-current shift used for the varied flux vs the table's 1σ.
 - [ ] Apply `kNuMuCC_SAND_FV` in the macro.
