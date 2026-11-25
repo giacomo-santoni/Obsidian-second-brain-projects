@@ -187,7 +187,7 @@ std::cout << "chi2/ndf (varied vs universe 1) = " << chi2 << "/" << ndf << std::
 
 ## Next steps
 
-- [ ] Rerun `caffluxweighter --nd --fhc` on all nominal CAFs (24 files) and the varied ones.
+- [x] Rerun `caffluxweighter --nd --fhc` on all nominal CAFs (24 files) and the varied ones.
 - [x] Redo the reweight vs varied comparison on all files (done at reco level, 2026-11-24: still incompatible, see [[#Full statistics, reco level (2026-11-24)]]).
 - [ ] Compute χ² varied vs −1σ, with and without normalising to the same integral.
 - [ ] Plot universe 2 (+1σ) too; print the POT of both samples.
