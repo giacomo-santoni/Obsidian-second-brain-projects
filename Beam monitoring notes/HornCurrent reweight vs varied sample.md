@@ -131,7 +131,7 @@ Possible outcomes:
 - Legend: `SetHeader` keeps only one header, so the second call replaced the first; `AddEntry(Form(...))` with only a string looks up an object by name, giving empty entries. Now the event counts go in the labels: `Nominal (N)`, `Varied, horn current neg (N)`, `Universe i (±1σ, N)`.
 - Universe colours chosen by hand: `kBlue + 1` (−1σ), `kGreen + 2` (+1σ), avoiding red (varied).
 
-## Results (2026-11-25)
+## Results without cuts (2026-11-25)
 
 All files (24 nominal, 25 varied), reco `Enu.calo`, 50 bins 0–20 GeV, no cuts.
 
@@ -183,9 +183,106 @@ Universe ordering checked in `CAFAna/Core/Multiverse.cxx` (`Hypercross`): 0 = no
   - `s` ≲ 1%: plausible beam-sim fluctuation, so the shape is consistent with the reweight.
   - `s` of several %: the shapes really differ; check the horn current used for the varied sample.
 
+## Results with νμ CC + SAND FV selection (2026-11-25)
+
+Same files and binning, with `kNuMuCC_SAND_FV` applied to both loaders: SAND particles, exactly 1 primary muon, and `inSANDFV` (= `inSANDInnerVol || inFrontECAL`). About 4% of the events survive (71k out of 1.8M).
+
+```
+POT ratio   varied/nominal = 1.03943
+Event ratio varied/nominal = 1.02683  (raw: 72800 / 70898)
+Events after POT scaling: varied/nominal = 0.987875
+
+H0: no effect (ratio = 1)                  chi2/ndf = 63.8665  / 50   p = 0.0899272
+H1: -1 sigma reweight (universe 1)         chi2/ndf = 52.4018  / 50   p = 0.380979
+H0, shape only (area normalised)           chi2/ndf = 56.3967  / 49   p = 0.217937
+H1, shape only (area normalised)           chi2/ndf = 51.8612  / 49   p = 0.362919
+```
+
+### Normalisation: matches the −1σ prediction
+
+| | events at equal POT | ratio to nominal |
+|---|---|---|
+| Nominal | 70,898 | 1 |
+| −1σ reweight (universe 1) | 70,199 | **0.990** |
+| Varied (`horn_current_neg`) | 70,038 | **0.988 ± 0.005** |
+| +1σ reweight (universe 2) | 71,597 | 1.010 |
+
+- Error: `√(1/72800 + 1/70898)` ≈ 0.5%.
+- Varied vs −1σ: 0.2% apart, well within errors. About 2.3σ from "no effect" and about 4σ from +1σ.
+- The +1.6% excess seen without cuts is **gone**.
+
+### Shape: consistent too
+
+- H1 fits well: χ²/ndf ≈ 1 (52.4/50 full, 51.9/49 shape only, p ≈ 0.37).
+- H1 preferred over H0 by Δχ² ≈ 11.5 (roughly 3σ). Most of it comes from the total; shape alone gives Δχ² ≈ 4.5.
+- In the plot the red points follow the blue dip at 3.5–5 GeV (≈ 0.95–0.97); elsewhere flat within errors.
+
+### Caveats
+
+- **Less statistical power.** Errors ≈ 1.5% per bin at the peak, 5–10% above 6 GeV, for an effect ≤ 3%. "Consistent" means no disagreement at this precision; differences of ~1% would not be seen. Beam-sim fluctuations are probably small compared with these errors.
+- **The no-cut excess lived in the rejected events**: interactions outside the SAND FV or not νμ CC with a reconstructed muon (mostly magnet, yoke, rock). A horn-current change can't produce an excess only outside SAND, so the varied production probably differs in something affecting only those events:
+  - generation volume or geometry;
+  - size or position of the flux window;
+  - spatial (off-axis) extent of the flux.
+- Check: run with the FV cut inverted (`!inSANDFV`) and plot vertex X and Z, nominal vs varied (the X/Z spectra are already filled in the macro but never plotted). An excess at large |x| or in a specific Z region points to geometry or flux-window differences.
+
+### Conclusion
+
+For the observable actually used (selected νμ CC in SAND FV), the HornCurrent −1σ weights **reproduce the varied sample within statistics**, in total and in shape. The no-cut excess outside the FV is a separate production issue, worth understanding but not affecting this analysis.
+
+## Why χ² and not Kolmogorov–Smirnov
+
+For this question χ² fits better. KS is still useful as a cross-check (see the end).
+
+1. **KS compares shape only.** It compares the **normalised** cumulative distributions, so it ignores the total. Here half the information is in the normalisation (+1.6% without cuts; 0.988 vs 0.990 with selection). χ² sees both, and the shape-only version separates them (without cuts, H1 goes 665 → 132 once the normalisation is removed). ROOT's `TH1::KolmogorovTest` option `"N"` adds a separate normalisation comparison, but it is less transparent.
+2. **KS is meant for unbinned, unweighted data.** Here we have:
+   - binned histograms: KS p-values on binned data are too optimistic (too close to 1), as the ROOT docs say;
+   - weighted events (POT scaling, −1σ weights): the KS p-value is not well defined without corrections.
+   χ² on histograms uses the per-bin errors directly, which already account for the weights.
+3. **KS assumes two independent samples.** The −1σ universe is made of the **same events as the nominal**, reweighted. KS of varied vs −1σ would treat the nominal statistics as independent, which they aren't. The χ² on ratios handles this explicitly (see below).
+4. **χ² extends naturally:**
+   - extra errors in quadrature (e.g. the beam-sim error `s`), or a covariance matrix for systematics;
+   - Δχ² between H0 and H1 (e.g. 63.9 − 52.4 = 11.5) says which hypothesis is preferred and by how much; KS only gives "compatible or not" for each one separately;
+   - the CAFAna fit for beam monitoring uses χ² / Poisson likelihood, so the numbers are directly comparable.
+
+**Limits of χ²:**
+- Needs enough events per bin (≳ 10–20) for Gaussian errors. With the selection the high-E bins have a few hundred, so fine. With fewer, use a Poisson likelihood (Baker–Cousins χ²).
+- Depends somewhat on the binning; unbinned KS doesn't.
+
+**When KS is useful:** as a binning-independent cross-check of the shape, on unbinned, unweighted events of varied vs nominal. KS is especially sensitive to an overall shift of the distribution, which is the kind of effect a horn-current change produces. Without weights it can only test H0 (varied vs nominal), not H1 (vs −1σ).
+
+## Is it OK that the model comes from weighted MC?
+
+Yes, as long as the model's own statistical error is in the χ². In this test it is, though not explicitly.
+
+**The model is a MC prediction, which is standard.** H1 doesn't come from the sample being tested. It comes from the **nominal** sample, a separate MC production reweighted with the −1σ weights. Every analysis works this way. Two conditions:
+1. The model must be **independent** of the tested sample. Nominal and varied are separate productions, so this holds.
+2. The model's **statistical error** must be included, because the nominal has a finite number of events.
+
+**Where the model's error sits.** Per bin the test computes
+
+`d = r_v − r_u = h_v/h_n − hs₀/h_n = (h_v − hs₀) / h_n`
+
+i.e. varied − (−1σ prediction), up to the common 1/h_n. Its true variance is `σ²(h_v) + σ²(hs₀)`:
+- `σ²(h_v)`: statistics of the varied sample.
+- `σ²(hs₀) = Σ wᵢ²`: statistics of the model, from the nominal events. Since the weights are close to 1 (within ±3%), this ≈ `σ²(h_n)`.
+
+The error used is that of `r_v = h_v/h_n`. `Divide` propagates **both** histograms' errors: `σ(r_v) ≈ √(σ²(h_v) + σ²(h_n)) / h_n`. That is the right variance: the `σ²(h_n)` term **is** the model's statistical error.
+
+**Why `r_u` has zero error** (`SetBinError(b, 0)`): the −1σ universe and the nominal are made of the same events, so their fluctuations almost cancel in the ratio. Giving `r_u` an error too would count the nominal statistics **twice** and make χ² too small.
+
+The same holds for H0 (model = 1): `d = (h_v − h_n)/h_n`, variance `σ²(h_v) + σ²(h_n)`, again the error of `r_v`.
+
+**Approximations:**
+- Weights ≠ 1: `Σwᵢ²` differs from `Σ1` by a few % at most, negligible on χ². Exact version: bin error² = `(σ²(h_v) + Σwᵢ²) / h_n²`.
+- The weights themselves have an uncertainty: the flux tables come from a finite-statistics beam simulation. Not included, same as the beam-sim fluctuations; makes the p-values a worst case.
+- Shape-only tests: here one thing **does** come from the tested sample, the scale factor (from the varied total). That's why those tests use ndf − 1.
+
 ## Next steps
 
 - [x] Run the macro with the χ² tests and record the results above (2026-11-25).
+- [x] Rerun with the νμ CC + SAND FV selection (2026-11-25): consistent with −1σ.
+- [ ] Inverted FV (`!inSANDFV`): plot vertex X and Z, nominal vs varied, to locate the no-cut excess.
 - [ ] Compare the integrated flux per POT at SAND, nominal vs varied (explains the +1.6%?).
 - [ ] Add the extra-error `s` scan to the macro for the shape-only H1 test.
 - [ ] Compare nominal and varied flux histograms with errors; ideally nominal A vs nominal B.
