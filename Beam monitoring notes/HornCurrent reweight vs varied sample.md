@@ -278,10 +278,123 @@ The same holds for H0 (model = 1): `d = (h_v − h_n)/h_n`, variance `σ²(h_v) 
 - The weights themselves have an uncertainty: the flux tables come from a finite-statistics beam simulation. Not included, same as the beam-sim fluctuations; makes the p-values a worst case.
 - Shape-only tests: here one thing **does** come from the tested sample, the scale factor (from the varied total). That's why those tests use ndf − 1.
 
+## Is the varied sample compatible with both H0 and H1? (2026-11-26)
+
+With the selection over 0–20 GeV, both χ²/ndf are close to 1 (H0 63.9/50, p = 0.09; H1 52.4/50, p = 0.38), so neither is rejected by its own goodness of fit. That does **not** mean the data support both equally.
+
+- **Dilution:** only ~10 of the 50 bins (≈ 3–6 GeV) are sensitive to the horn current. The other ~40 contribute ≈ 1 each to both χ², so both totals stay close to ndf. The goodness of fit over 50 bins is a weak test for this question.
+- **The right quantity is Δχ² = χ²(H0) − χ²(H1)**, the likelihood ratio between the two hypotheses: `L(H1)/L(H0) = e^(Δχ²/2)`. Over 0–20 GeV: Δχ² = 11.5, so ≈ 300× more likely under H1, ≈ 3.4σ.
+
+## χ² in a restricted energy range (2026-11-26)
+
+Added to the macro: `chi2_range(label, model, scale, normalised)`, the same four tests but only on the bins whose centre is in `[emin, emax]`.
+- Bins: `bmin = FindBin(emin + 1e-6)`, `bmax = FindBin(emax − 1e-6)`. With 0.4 GeV bins, 2–8 GeV = bins 6–20 (15 bins).
+- Shape only: the scale factor uses the totals **inside** the range (`Integral(bmin, bmax)`), otherwise a normalisation difference outside the range would remain as an offset.
+- Prints Δχ² (H0 − H1) and `√Δχ²` as an approximate number of σ, full and shape only.
+- Compile bug met: without `return c;` at the end of the lambda its return type is `void`, so `const double c0 = chi2_range(...)` fails with "void value not ignored as it ought to be".
+
+### Results (selection νμ CC + SAND FV)
+
+0–10 GeV (bins 1–25):
+```
+H0: no effect (ratio = 1)                  chi2/ndf = 27.8399  / 25   p = 0.315278
+H1: -1 sigma reweight (universe 1)         chi2/ndf = 17.5952  / 25   p = 0.859084
+H0, shape only (area normalised)           chi2/ndf = 24.2921  / 24   p = 0.445001
+H1, shape only (area normalised)           chi2/ndf = 17.6109  / 24   p = 0.821465
+Delta chi2 (H0 - H1): full = 10.2447 (~3.20073 sigma),  shape only = 6.68118 (~2.5848 sigma)
+```
+
+2–8 GeV (bins 6–20):
+```
+H0: no effect (ratio = 1)                  chi2/ndf = 25.2816  / 15   p = 0.0462865
+H1: -1 sigma reweight (universe 1)         chi2/ndf = 14.9028  / 15   p = 0.458444
+H0, shape only (area normalised)           chi2/ndf = 22.4049  / 14   p = 0.0706696
+H1, shape only (area normalised)           chi2/ndf = 14.5694  / 14   p = 0.408207
+Delta chi2 (H0 - H1): full = 10.3789 (~3.22163 sigma),  shape only = 7.83544 (~2.79919 sigma)
+```
+
+| Range | H0 full | H1 full | Δχ² full | Δχ² shape only |
+|---|---|---|---|---|
+| 0–20 GeV (50 bins) | 63.9 / 50 (p 0.09) | 52.4 / 50 (p 0.38) | 11.5 (~3.4σ) | 4.5 (~2.1σ) |
+| 0–10 GeV (25 bins) | 27.8 / 25 (p 0.32) | 17.6 / 25 (p 0.86) | 10.2 (~3.2σ) | 6.7 (~2.6σ) |
+| 2–8 GeV (15 bins) | 25.3 / 15 (**p 0.046**) | 14.9 / 15 (p 0.46) | 10.4 (~3.2σ) | 7.8 (~2.8σ) |
+
+### Interpretation
+
+- **The full Δχ² is stable (≈ 10–11) in every range.** Cutting bins removes the same amount of χ² from H0 and H1: the removed bins are neutral and only add noise. All the discriminating information is inside 2–8 GeV.
+- **The shape-only Δχ² grows as the range narrows** (4.5 → 6.7 → 7.8). The area normalisation is computed only where the effect is, so it stops absorbing the dip at 3.5–6 GeV.
+- Of the ~10 units of full Δχ², about 8 come from the **shape** (the dip) and about 2 from the overall **normalisation** (−1%).
+- **In 2–8 GeV, H0 is rejected at 5%** (p = 0.046, χ²/ndf 1.7), while **H1 fits perfectly** (χ²/ndf 0.99).
+- H1 at 0–10 GeV has χ²/ndf ≈ 0.7: a bit low but normal for 25 bins (typical range ≈ 0.6–1.4).
+
+### Conclusion
+
+With the νμ CC + SAND FV selection:
+1. The varied sample is **consistent with the −1σ reweight**, in total and in shape (χ²/ndf ≈ 1 in every range).
+2. It is **not consistent with "no effect"** in the sensitive region (p ≈ 0.05), and the data prefer −1σ over H0 by **~3σ** in every range.
+3. Most of the discriminating power is in the **shape** (dip at 3.5–6 GeV).
+
+Reporting caveat: choosing the range after looking at the data is mild tuning. Here it is justified, because 2–8 GeV comes from where the flux tables put the effect, not from the varied data, and Δχ² is the same in all ranges. Report all three ranges anyway.
+
+## Next: fit of the effect size μ
+
+Instead of testing only μ = 0 (H0) and μ = 1 (H1), leave the size of the shift free:
+
+`model(μ) = 1 + μ · (r_u − 1)`
+
+The model is linear in μ, so the minimum has an exact solution (`x = r_u − 1`, `y = scale·r_v − 1`, `e` = error):
+
+```
+μ̂   = Σ(x·y/e²) / Σ(x²/e²)
+σ_μ = 1 / √Σ(x²/e²)
+```
+
+Outputs:
+- μ̂ ± σ_μ and χ²_min / (ndf − 1);
+- significance of the effect: (μ̂ − 0)/σ_μ; compatibility with −1σ: (μ̂ − 1)/σ_μ;
+- expected sensitivity 1/σ_μ (depends only on the errors, not on the varied data: how powerful the test is).
+- Variants: full and shape only (scale recomputed at each μ, so a small scan), 0–20 and 2–8 GeV.
+- Scan of χ²(μ) − χ²_min for μ ∈ [−1, 3], saved as `workspace/chi2_mu_scan.png`, with lines at Δχ² = 1, 4 and at μ = 0, 1.
+- Rough expectation from the current numbers: μ̂ ≈ 0.8–1 ± ~0.3.
+- Assumes a response linear in μ, the same assumption as the weights (`1 + σ·Δ`). Fine for μ ∈ [0, ~1.5].
+
+## What the p-value means
+
+**Definition:** `p = P(χ² ≥ χ²_observed | hypothesis true)`. It is what `TMath::Prob(χ², ndf)` returns.
+
+- If the hypothesis is true and the errors are Gaussian and correct, χ² follows the χ² distribution with ndf degrees of freedom (mean = ndf; for 15 ndf, typical values ≈ 7–25). p is the area of its right tail beyond the observed value.
+- **H0 in 2–8 GeV, χ² = 25.3/15, p = 0.046:** if the horn current did nothing, repeating the experiment with independent statistics, only 4.6% of the time would the disagreement be this large or larger. Just below the conventional 5% threshold.
+- **H1 in 2–8 GeV, χ² = 14.9/15, p = 0.46:** if the −1σ weights are right, 46% of the time the disagreement would be at least this large. Entirely ordinary.
+
+**What it is NOT:**
+- **Not the probability that the hypothesis is true.** p = 0.46 doesn't mean "H1 is true at 46%". p assumes the hypothesis is true and measures how unusual the data are under it.
+- **A large p doesn't prove the hypothesis,** it only says the data don't contradict it. That's why over 0–20 GeV both H0 and H1 had acceptable p.
+- **It doesn't compare two hypotheses.** Each p tests one hypothesis alone; to choose between H0 and H1 use Δχ².
+
+**Δχ² and "σ":**
+- `L(H1)/L(H0) = e^(Δχ²/2)`. With Δχ² = 10.4: e^5.2 ≈ 180, i.e. the data are ~180× more likely under H1.
+- "√Δχ² σ" (≈ 3.2σ) is an **approximation**, exact when H0 and H1 are two values of one parameter (μ = 0 and μ = 1) and χ² is a parabola in it. That's why the μ fit is the cleanest way: (μ̂ − 0)/σ_μ is a well-defined number of σ.
+
+| σ (Gaussian, two-sided) | p |
+|---|---|
+| 1 | 0.32 |
+| 2 | 0.046 |
+| 3 | 0.0027 |
+| 5 | 5.7 × 10⁻⁷ |
+
+So H0's p = 0.046 in 2–8 GeV ≈ 2σ.
+
+**Caveats for this case:**
+1. **The errors must be right.** Here only event statistics; beam-sim fluctuations not included. If they matter, the true χ² are smaller and the p-values larger: H0 would be less excluded.
+2. **Several tests on the same data.** 3 ranges × 4 tests. Picking the smallest p a posteriori underestimates the chance of finding "something" by accident. Small effect here (range motivated a priori, Δχ² stable), but report all of them.
+3. **Enough events per bin** for Gaussian errors: thousands per bin in 2–8 GeV, so fine.
+
 ## Next steps
 
 - [x] Run the macro with the χ² tests and record the results above (2026-11-25).
 - [x] Rerun with the νμ CC + SAND FV selection (2026-11-25): consistent with −1σ.
+- [x] χ² in restricted ranges 0–10 and 2–8 GeV (2026-11-26): H1 preferred by ~3σ in every range; H0 rejected at 5% in 2–8 GeV.
+- [ ] Implement the μ fit (μ̂ ± σ_μ, χ²(μ) scan plot).
 - [ ] Inverted FV (`!inSANDFV`): plot vertex X and Z, nominal vs varied, to locate the no-cut excess.
 - [ ] Compare the integrated flux per POT at SAND, nominal vs varied (explains the +1.6%?).
 - [ ] Add the extra-error `s` scan to the macro for the shape-only H1 test.
