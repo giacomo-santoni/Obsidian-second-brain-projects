@@ -55,6 +55,80 @@ Code: `duneanafluxtools/src/duneanafluxtools/FluxWeighter.cxx` and `CAFInterface
 - Header ids: focussing `3000 + i` at index `i` (0–44); hadron production `3500 + i` at index `45 + i` (45–65).
 - In CAFAna (`FluxDialSyst::Shift`): `weight *= w[0] + σ·(w[1] − w[0])`, so −1σ gives `2 − w[1]`.
 
+## From σ to the event weight in CAFAna (2026-11-26)
+
+In CAFAna, σ is set when the multiverse is built. Each event starts with weight 1, and `Shift` multiplies in `1 + σ·(w[1] − 1)`. That reproduces the weighter's own linear formula exactly.
+
+### Where σ comes from
+
+`Multiverse::Hypercross(systs, nsigma)` (`CAFAna/Core/Multiverse.cxx:149-179`) builds one universe per syst and per integer σ in [−nsigma, +nsigma], skipping 0, plus the nominal:
+
+```cpp
+univs.emplace_back(); // nominal
+for(const IFitSyst* s: systs)
+  for(int i = -nsigma; i <= +nsigma; ++i){
+    if(i == 0) continue;
+    FitUniverse univ; univ.emplace(s, i);   // sigma = i
+    univs.push_back(univ);
+  }
+```
+
+| Universe (`Hypercross(systs, 1)`, 1 syst) | σ passed to `Shift` |
+|---|---|
+| 0 | nominal: `Shift` is not called (`IsNominal()` is skipped) |
+| 1 | −1 |
+| 2 | +1 |
+
+- `Hypercross(systs, 2)` gives −2, −1, +1, +2.
+- `Multiverse::RandomGas(systs, N, seed)` draws σ from a Gaussian with mean 0 and width 1.
+
+### Why `weight *=` and not `=`
+
+`weight` is the weight the event has already accumulated, passed by reference.
+- Several systs in one universe (`RandomGas`, or several shifted together) call `Shift` in turn on the same `weight`, so the result is the product `w_horn × w_hadprod × …`. With `=`, only the last syst would survive.
+- Any weight applied upstream would be lost with `=`.
+- With a single syst and no upstream weight, `*=` and `=` give the same result.
+
+### The starting weight is 1, not 0
+
+- `SpectrumLoader::HandleFile` sends each record with weight 1: `HandleRecord(&sr, 1)`.
+- `ShiftedInteractionEnsembleSource::HandleRecord` (`CAFAna/Core/IRecordSource.cxx:45-67`) returns early if `weight == 0`, so `Shift` never sees 0. It then copies the weight into one slot per universe and calls `Shift` on non-nominal universes:
+  ```cpp
+  if(weight == 0) return;
+  std::vector<double> weights(fShifts.size(), weight);
+  if(!fShifts[univIdx].IsNominal()) fShifts[univIdx].Shift(slc, weights[univIdx]);
+  ```
+- If a weight is added upstream (e.g. `.Weighted(...)`), the starting value becomes that weight.
+- Runtime check: print the first ~10 values of `weight` inside `Shift`; they should all be 1.
+
+### Why `w[0] + σ·(w[1] − w[0])`
+
+This is the straight line through (σ = 0, `w[0]`) and (σ = 1, `w[1]`). With `weights = {1, r}` it is `1 + σ·(r − 1)`:
+- +1σ gives `r`
+- −1σ gives `2 − r`
+- +2σ gives `2r − 1`
+
+This is not an approximation. `GetFluxFocussingWeight` (`FluxWeighter.cxx:541-564`) is itself linear in σ:
+```cpp
+return 1 + param_val * focussing.NDuncerts.at(param_id).at(nucfg).at(bin_oa)->GetBinContent(bin_e);  // 1 + σ·Δ
+```
+Since `r = 1 + Δ`, the CAFAna formula gives `1 + σ·Δ`, the same as calling the weighter with `param_val = σ`.
+
+Checked for the focussing params only. Hadron production stores its ratios the same way, but the linearity of `GetFluxHadProdWeight` has not been checked.
+
+### Why the weighter is linear
+
+- The formula is `1 + param_val · Δ`, with Δ a fixed number per bin. There are no quadratic terms and no interpolation between several variations.
+- `FluxWeighter.cxx:143-232` loads **one** set of shift histograms per param and per ν configuration. There are no separate +1σ / −1σ (or ±2σ) tables, so −1σ is the mirror of +1σ by construction (`1 − Δ`).
+- This is a modelling choice, not necessarily the physical response: a horn-current change can be asymmetric. Comparing universe 1 with `horn_current_neg` tests exactly this assumption (cause 1 in [[#Full statistics, reco level (2026-11-24)]]).
+
+### No clamp at the ND
+
+The FD formula clamps at 0 (`std::max(0.0, …)`); the ND formula and `FluxDialSyst::Shift` do not. If Δ > 1 in some bin, −1σ gives a negative weight. This is unlikely for HornCurrent at ±1σ. To match the FD behaviour:
+```cpp
+weight *= std::max(0.0, w[0] + sigma * (w[1] - w[0]));
+```
+
 ## The bug: SAND events got FD + RHC weights
 
 File checked: `/pnfs/dune/persistent/users/gsantoni/beam_monitoring/data/fast_reco/nominal/sand_events_nominal_FHC.caffluxsyst.sand.full.sandstt1.0000001.CAF.flat.root` (the old one).
