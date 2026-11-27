@@ -38,50 +38,88 @@ In both cases `t(pt0) == t(pt1)` exactly (`651600007866.98547`, `1432800006465.4
 
 The same bug was in other places too. The first test of the patch crashed on a `fast_reco_test` assertion at spill 540 (`ECAL cluster E 11.411 MeV isn't the deposit 11.410 MeV`). The ECAL reco decided "born inside the ECAL" by comparing times, and the test used the (now correct) truth `start_pos`. In production the two agreed only because both were wrong in the same way.
 
-## Fix (sandreco)
+## Fix (sandreco, commit `5c4fb9a`)
 
-Point order must come from the **index**, never from the time.
+Branch `hotfix/remove-sort-by-time-due-to-precision-error` on baltig, one commit on top of `85dff1d` (main): `5c4fb9a` "removed sort by time due to double precision error", 7 files, +89/−65.
 
-**Data structure (`edep_reader`)**
-- `EDEPTrajectory::points_`: every point **once**, in Geant4 step order. `GetTrajectoryPointsVect()` returns it, with no sort and no copy.
-- `trajectory_points_` (per subdetector) and `first_points_` / `last_points_` now hold **indices** into `points_` (`EDEPPointIndices = std::vector<std::size_t>`) instead of copies. Indices rather than pointers because the `EDEPTrajectory` copy constructor is `= default`: a pointer would point into the original object.
-- New helpers: `GetPoint(i)`, `GetFirstPointInDetector(c)`, `IsBornInDetector(c)` (true if point 0 is in `c`).
-- `IsTrajectorySaturated()` now uses `points_.size()`. Before, it also counted the STT/DRIFT duplicates.
+Point order must come from the **Geant4 step order**, never from the time.
 
-**Users updated**
+**1. Point order (`edep_reader`: `EDEPTree.cpp`, `EDEPTrajectory.h/.cpp`)**
 
-| where | before | after |
+| | `85dff1d` | `5c4fb9a` |
 |---|---|---|
-| `common/truth_filler` (start/end) | sort on `T` | `points_.front()` / `back()` |
-| `fast/ecal` `born_inside_ecal` | compare first-point `T` | `IsBornInDetector(ECAL)` |
-| `fast/tracker` `entry_point` (STT vs DRIFT) | smaller `T` | smaller index |
-| `common/gluckstern_smearing` `tracker_entry_point` | smaller `T` | smaller index |
-| `fast/grain`, `fast/ecal` entry point | copy of the point | `GetFirstPointInDetector` |
-| `test/fast_reco_test` `find_entry_point`, born-in-ECAL | smaller `T` | smaller index |
+| `GetTrajectoryPointsVect()` | joins the per-subdetector lists, `stable_sort` on `T` | returns `ordered_points_` (new private member, filled in `fill_points`), Geant4 step order |
+| STT+DRIFT points | twice | once |
+| equal `T` | wrong/ambiguous order | correct |
+| public interface | — | unchanged (same signature, still returns a copy) |
 
-**Left as is:** the hit sort in `EDEPTree.cpp:200` (`stable_sort` on `Start.T`). Hits are not duplicated, and within one detector they already come in edep-sim order. Adding the same offset can make two different times equal but can't swap them, and on ties `stable_sort` keeps the original order.
+`trajectory_points_` and `first_points_` (per subdetector) are unchanged and still hold copies. `truth_filler` (`front()`/`back()` of `GetTrajectoryPointsVect()`) is correct now without changes.
 
-**Why a relative time doesn't help:** subtracting an offset in sandreco can't recover precision that the spill build already threw away. It would only work if the spill build saved times relative to the spill start, which changes the file convention that CAFMaker/TMS also use. The step index is exact anyway.
+**2. Tracker entry point** (`fast/tracker/reco.cpp`, `common/gluckstern_smearing/gluckstern_smearing.cpp`, test `find_entry_point`)
+
+| `85dff1d` | `5c4fb9a` |
+|---|---|
+| first points of STT/DRIFT: smaller `T` wins | the fronts are candidates; the first one met along `GetTrajectoryPointsVect()` wins |
+| test: smaller `T` over all points of the region | test: same logic as the reco |
+
+**3. Born inside the ECAL** (`fast/ecal/reco.cpp` `born_inside_ecal`, `test_fast_reco.cpp`)
+
+| | `85dff1d` | `5c4fb9a` |
+|---|---|---|
+| reco | ECAL first point not later (in `T`) than any other subdetector's | ECAL first point `==` first trajectory point |
+| test | **any** ECAL point with `T == true.time` and float-cm position `== start_pos` | same criterion as the reco |
+
+The old test criterion crashed run 92 (`fast_reco_test`, context 440): `ixn[25].part[0]: ECAL cluster var_position (14.6917, 22.4237, 18.4384) cm isn't the spread of its 1050 hits (14.6923, 22.4237, 18.4401) cm`.
+- One hit differed between test and reco: 0.0021 MeV from an e⁻ (trj 9865, 5 generations below the π⁻ root) born just **outside** the ECAL.
+- The reco correctly took it as not born in the ECAL. The test matched its **second** step, already in the ECAL, which had the same `T` (~5.28e11 ns) and the same float-cm position, so it added the hit to the π⁻ cluster.
+- With 1050 hits, E and barycenter stayed within tolerance; the z spread did not (1.7e-3 cm vs ~1.2e-3 cm tolerance).
+
+**4. ECAL cluster spread `var_position`** (reco and test, same formula)
+
+| | `85dff1d` | `5c4fb9a` |
+|---|---|---|
+| sums | `e`, `e2 = Σde²` | `e`, `cross = Σ_{i<j} de_i de_j` (`cross += de * e` before `e += de`) |
+| formula | `sqrt(neff/(neff−1) · Σw dx²/e)`, `neff = e²/e2` | `sqrt(e · Σw dx² / (2 cross))`, 0 if one hit or `cross <= 0` |
+| result | — | identical (algebraic identity) |
+| one dominant hit | `neff − 1` cancels, depends on the hit order | no subtraction, stable |
+
+Not the cause of any crash: only a more stable rewrite of the same quantity.
+
+**5. `var_position` assertion message (test):** now prints the reco values, the expected values and the number of hits.
+
+**Left as is**
+- The hit sort in `EDEPTree.cpp:205` (`stable_sort` on `Start.T`). Hits are not duplicated, and within one detector they already come in edep-sim order. Adding the same offset can make two different times equal but can't swap them, and on ties `stable_sort` keeps the original order.
+- `IsTrajectorySaturated()` still counts the STT/DRIFT duplicates.
+
+**Why a relative time doesn't help:** subtracting an offset in sandreco can't recover precision that the spill build already threw away. It would only work if the spill build saved times relative to the spill start, which changes the file convention that CAFMaker/TMS also use. The step order is exact anyway.
 
 ## Test
 
-Everything is in `ND_Production_main/tests/debug_sand_mc/`. Production was not touched.
+Everything is in `ND_Production_main/tests/debug_sand_mc/`.
 
 - `ND_CAFMaker/`: CAFMaker v5.3.1 with a field-by-field diff dump instead of the `throw`. This is how the 2 mismatches were found.
-- `sandreco/`: sandreco v1.2.1 (commit `85dff1d`) + the patch, built in `sand-prod-cpu_v1.2.1.sif`.
-- `run_full_test.sh`: run detached (`setsid nohup`). It runs patched sandreco on production input 0000001 (same `config_json.py` and parameters as production), then the **original** production CAFMaker v5.3.1 with the check enabled. The result goes to `status.txt`.
+- `run_full_test.sh`: runs patched sandreco on production input 0000001 (same `config_json.py` and parameters as production), then the **original** production CAFMaker v5.3.1 with the check enabled. The result goes to `status.txt`.
 - `dump_parts.C`, `dump_traj.C`: macros that print the mismatched particles and their edep-sim points.
 
-Result (2026-11-26):
+The 2026-11-26 run of `run_full_test.sh` (all 1498 spills, `CAFMaker check PASSED on all spills`) used an **earlier version** of the patch, not `5c4fb9a`.
 
-```
-END sandreco patched, exit=0          # all 1498 spills, no fast_reco_test assertion
-END CAFMaker, exit=0
-RESULT: CAFMaker check PASSED on all spills
-```
+Final version (`5c4fb9a`), 2026-11-27: production rerun of run-sandreco (cluster `23342671`) and run 92 (job `23340857`) complete with no `fast_reco_test` assertion. CAFMaker with the check on these outputs: not run yet.
 
-- The `geoinfo: No object found` warnings: 36005, the same count as the production run. Unrelated to the patch.
-- Patched SANDRECO vs production SANDRECO: 1001167223 vs 1001167835 bytes. The CAF output has the same `cafTree` size and branch sizes as the debug run.
+## Other problems found on 2026-11-27 (not caused by the fix)
+
+**Runs 0–3 (cluster `23342671`): output lost.** All ran to 100%, then `mv: cannot stat .../tmp/run-sandreco/...000000{0-3}.SANDRECO.root`.
+- A second cluster, `23342805`, was submitted by mistake 2 min later and removed with `condor_rm` after ~7 s. In those seconds its `run_sandreco.sh` ran `rm -f "$SANDRECOfile"` on the **same temporary path** that the first jobs had just opened. ufwrun kept writing to the unlinked file, and at the end the file was gone.
+- Run 4 survived: its duplicate started 1 s before the removal and never reached the `rm`.
+- The files `0000000–0003` in `SANDRECO/0000000/` are from the previous night's production (old code).
+
+**Run 5: muon missing in edep-sim.** ufwrun stopped at context 1339 (89%): `g4_id_map.cpp:83 Interaction 74818: secondary track ids [754, 23957] are not contiguous (384 ids)`, with an exception limit of 0.
+- Interaction 74818 (νμ CC DIS on Fe; vertex in the KLOE yoke, `KLOEYokeEndcapDR`, iron): **7 vertex particles, 6 root trajectories**. The μ⁻ (2372 MeV) has no trajectory, so every track id is shifted by one. The first secondary (a γ from the π⁰) lands in the primary block (id 754); the other secondaries are at 23575–23957.
+- Followed back through every stage: OVERLAY (spill 1339) → `EDEPSIM_SPILLS` (entry 74818) → hadd file 0000005 → **original edep-sim file `...0000058.EDEPSIM.root`, entry 7771, EventId 9093**. The muon is missing in all of them.
+- GENIE (`gRooTracker`, same file): the muon is a normal final-state particle (status 1, E 2371.95 MeV, mass 105.66 MeV). The other 6 match the edep-sim vertex one by one.
+- Geant4 **never tracked it**: trajectory ids are contiguous 0–389 (the muon never got a track id), and no hit segment has a contributor without a trajectory.
+- In the whole OVERLAY file (1500 spills) it is the only interaction with this mismatch.
+- Frequency: a scan of the **whole nominal edep-sim production** (999 files, 8 411 605 events; vertex particles vs root trajectories per event) finds **only this event**. So 1 in ~8.4M, and only run 5 is affected.
+- sandreco reads the file correctly. Its only fault is that it stops the whole file instead of skipping the interaction or the spill. `convert2edepsim_spill_format` also sizes the primary block on the number of vertex particles, not of root trajectories.
 
 ## Gotchas met along the way
 
@@ -89,13 +127,19 @@ RESULT: CAFMaker check PASSED on all spills
 - In the debug CAF on disk, `nu.sec` is pruned after the SAND filler, so look particles up by interaction `id` and use the in-memory values.
 - edep-sim v3.2: use the getters (`GetTrackId()`, `GetPosition()`, …). The members are private.
 - To run patched sandreco, `ufw-ldpath` must list **only** the patched `lib64`. With `/usr/local/lib64` as well, ufw registers `caf_streamer` twice and aborts.
-- Rebuilding/installing while a run is using the same libraries makes that run unreliable. Stop it first.
+- Rebuilding/installing while a run is using the same libraries makes that run unreliable. Stop it first. Never use `install_sandreco.sh` with jobs running: it does `rm -rf build install_sandreco`; use `cmake --build build --target install`.
+- The jobs load only `install_sandreco/lib64` (untracked), so `git checkout`/`stash`/`reset` in the source tree do not affect running jobs.
 
 ## Next steps
 
-- [ ] Propose the patch to sandreco (baltig MR), together with the note on the time precision after the spill build.
+- [ ] Open the MR for `hotfix/remove-sort-by-time-due-to-precision-error` (`5c4fb9a`) into main, together with the note on the time precision after the spill build.
+- [ ] Run CAFMaker v5.3.1 with the check on the `5c4fb9a` outputs.
 - [ ] Rebuild `sand-prod-cpu` with the fix, then rerun run-sandreco and run-cafmaker on the files that failed.
+- [ ] Rerun sandreco runs 0–3 (output lost to the duplicate submission).
 - [ ] Retest file 62 (job `23298861.62.62`, entry 1102). Probably the same cause, not checked yet.
+- [ ] Run 5: decide how to handle the missing-muon event (skip the spill via `ufw-ignore-errors`? make `g4_id_map` tolerant?). Find out why Geant4 dropped the muon (rerun edep-sim on EventId 9093 with verbose output).
+- [x] Count how often primaries go missing in the whole edep-sim production: 1 event in 8 411 605 (scan of 2026-11-27).
+- [ ] Make the sandreco temporary output name unique per job.
 - [ ] Discuss with ND_Production whether the spill build should save times relative to the spill start.
 
 ## Related
