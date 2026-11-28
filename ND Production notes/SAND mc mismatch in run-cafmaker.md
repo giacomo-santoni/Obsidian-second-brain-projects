@@ -112,14 +112,7 @@ Final version (`5c4fb9a`), 2026-11-27: production rerun of run-sandreco (cluster
 - Run 4 survived: its duplicate started 1 s before the removal and never reached the `rm`.
 - The files `0000000–0003` in `SANDRECO/0000000/` are from the previous night's production (old code).
 
-**Run 5: muon missing in edep-sim.** ufwrun stopped at context 1339 (89%): `g4_id_map.cpp:83 Interaction 74818: secondary track ids [754, 23957] are not contiguous (384 ids)`, with an exception limit of 0.
-- Interaction 74818 (νμ CC DIS on Fe; vertex in the KLOE yoke, `KLOEYokeEndcapDR`, iron): **7 vertex particles, 6 root trajectories**. The μ⁻ (2372 MeV) has no trajectory, so every track id is shifted by one. The first secondary (a γ from the π⁰) lands in the primary block (id 754); the other secondaries are at 23575–23957.
-- Followed back through every stage: OVERLAY (spill 1339) → `EDEPSIM_SPILLS` (entry 74818) → hadd file 0000005 → **original edep-sim file `...0000058.EDEPSIM.root`, entry 7771, EventId 9093**. The muon is missing in all of them.
-- GENIE (`gRooTracker`, same file): the muon is a normal final-state particle (status 1, E 2371.95 MeV, mass 105.66 MeV). The other 6 match the edep-sim vertex one by one.
-- Geant4 **never tracked it**: trajectory ids are contiguous 0–389 (the muon never got a track id), and no hit segment has a contributor without a trajectory.
-- In the whole OVERLAY file (1500 spills) it is the only interaction with this mismatch.
-- Frequency: a scan of the **whole nominal edep-sim production** (999 files, 8 411 605 events; vertex particles vs root trajectories per event) finds **only this event**. So 1 in ~8.4M, and only run 5 is affected.
-- sandreco reads the file correctly. Its only fault is that it stops the whole file instead of skipping the interaction or the spill. `convert2edepsim_spill_format` also sizes the primary block on the number of vertex particles, not of root trajectories.
+**Run 5: stopped at context 1339 (`g4_id_map.cpp:83`, secondary track ids not contiguous).** A primary muon has no trajectory already in the edep-sim output. Moved to [[Missing edepsim trajectories for primaries]], together with the same problem in 5 horn_current_neg files.
 
 ## Gotchas met along the way
 
@@ -137,11 +130,11 @@ Final version (`5c4fb9a`), 2026-11-27: production rerun of run-sandreco (cluster
 - [ ] Rebuild `sand-prod-cpu` with the fix, then rerun run-sandreco and run-cafmaker on the files that failed.
 - [ ] Rerun sandreco runs 0–3 (output lost to the duplicate submission).
 - [ ] Retest file 62 (job `23298861.62.62`, entry 1102). Probably the same cause, not checked yet.
-- [ ] Run 5: decide how to handle the missing-muon event (skip the spill via `ufw-ignore-errors`? make `g4_id_map` tolerant?). Find out why Geant4 dropped the muon (rerun edep-sim on EventId 9093 with verbose output).
-- [x] Count how often primaries go missing in the whole edep-sim production: 1 event in 8 411 605 (scan of 2026-11-27).
+- [ ] Run 5 (missing edep-sim muon): see [[Missing edepsim trajectories for primaries]].
 - [ ] Make the sandreco temporary output name unique per job.
 - [ ] Discuss with ND_Production whether the spill build should save times relative to the spill start.
 
 ## Related
 - [[ND Production]]
+- [[Missing edepsim trajectories for primaries]]
 - [[sandreco]]
